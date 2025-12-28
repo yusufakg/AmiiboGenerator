@@ -1,15 +1,14 @@
 #pragma once
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_RESIZE2_IMPLEMENTATION
-
 #include <filesystem>
 #include <cstdio>
+#include <cstdarg>
 #include <string>
-#include <iostream>
+#include <string_view>
 #include <memory>
 #include <stdexcept>
+#include <fstream>
+#include <utility>
 
 #include <switch.h>
 #include <curl/curl.h>
@@ -21,11 +20,11 @@
 namespace UTIL
 {
     // Constants
-    constexpr const char *EMUIIBO_PATH = "sdmc:/emuiibo/";
-    constexpr const char *AMIIBO_DB_PATH = "sdmc:/emuiibo/amiibos.json";
-    constexpr const char *AMIIBO_API_URL = "https://www.amiiboapi.com/api/amiibo/";
-    constexpr int TARGET_IMAGE_HEIGHT = 150;
-    constexpr long CURL_TIMEOUT_SECONDS = 120L;
+    inline constexpr std::string_view EMUIIBO_PATH = "sdmc:/emuiibo/";
+    inline constexpr std::string_view AMIIBO_DB_PATH = "sdmc:/emuiibo/amiibos.json";
+    inline constexpr std::string_view AMIIBO_API_URL = "https://www.amiiboapi.com/api/amiibo/";
+    inline constexpr int TARGET_IMAGE_HEIGHT = 150;
+    inline constexpr long CURL_TIMEOUT_SECONDS = 120L;
 
     // Helper function to print error and update console
     inline void printError(const char *format, ...)
@@ -35,8 +34,8 @@ namespace UTIL
         va_start(args, format);
         vsnprintf(buffer, sizeof(buffer), format, args);
         va_end(args);
-        fprintf(stderr, "%s", buffer);
-        consoleUpdate(NULL);
+        std::fputs(buffer, stderr);
+        consoleUpdate(nullptr);
     }
 
     // Helper function to print message and update console
@@ -47,71 +46,54 @@ namespace UTIL
         va_start(args, format);
         vsnprintf(buffer, sizeof(buffer), format, args);
         va_end(args);
-        printf("%s", buffer);
-        consoleUpdate(NULL);
+        std::fputs(buffer, stdout);
+        consoleUpdate(nullptr);
     }
 
     // Callback for curl file writing
-    static size_t write_data(void *ptr, size_t size, size_t nmemb, std::ofstream *stream)
+    inline size_t writeCallback(void *ptr, size_t size, size_t nmemb, void *userdata) noexcept
     {
-        if (stream == nullptr || !stream->is_open())
-        {
+        auto *stream = static_cast<std::ofstream *>(userdata);
+        if (!stream || !stream->is_open())
             return 0;
-        }
-        stream->write(static_cast<char *>(ptr), size * nmemb);
-        return size * nmemb;
+        const size_t bytes = size * nmemb;
+        stream->write(static_cast<const char *>(ptr), static_cast<std::streamsize>(bytes));
+        return bytes;
     }
 
     // RAII wrapper for CURL handles
     class CurlHandle
     {
-    private:
-        CURL *handle;
+        CURL *handle_;
 
     public:
-        CurlHandle() : handle(curl_easy_init()) {}
-
+        CurlHandle() noexcept : handle_(curl_easy_init()) {}
         ~CurlHandle()
         {
-            if (handle)
-            {
-                curl_easy_cleanup(handle);
-            }
+            if (handle_)
+                curl_easy_cleanup(handle_);
         }
 
-        CURL *get() const { return handle; }
-        bool is_valid() const { return handle != nullptr; }
-
-        // Disable copy operations
         CurlHandle(const CurlHandle &) = delete;
         CurlHandle &operator=(const CurlHandle &) = delete;
-
-        // Allow move operations
-        CurlHandle(CurlHandle &&other) noexcept : handle(other.release()) {}
-        CurlHandle &operator=(CurlHandle &&other) noexcept
+        CurlHandle(CurlHandle &&o) noexcept : handle_(std::exchange(o.handle_, nullptr)) {}
+        CurlHandle &operator=(CurlHandle &&o) noexcept
         {
-            if (this != &other)
+            if (this != &o)
             {
-                if (handle)
-                {
-                    curl_easy_cleanup(handle);
-                }
-                handle = other.release();
+                if (handle_)
+                    curl_easy_cleanup(handle_);
+                handle_ = std::exchange(o.handle_, nullptr);
             }
             return *this;
         }
 
-    private:
-        CURL *release()
-        {
-            CURL *tmp = handle;
-            handle = nullptr;
-            return tmp;
-        }
+        [[nodiscard]] CURL *get() const noexcept { return handle_; }
+        [[nodiscard]] explicit operator bool() const noexcept { return handle_ != nullptr; }
     };
 
     // Download file with proper error handling
-    inline int downloadFile(const std::string &url, const std::string &path)
+    [[nodiscard]] inline int downloadFile(std::string_view url, std::string_view path)
     {
         if (url.empty() || path.empty())
         {
@@ -120,50 +102,46 @@ namespace UTIL
         }
 
         CurlHandle curl;
-        if (!curl.is_valid())
+        if (!curl)
         {
             printError("Error: Failed to initialize CURL\n");
             return -1;
         }
 
-        std::ofstream ofs(path, std::ios::binary);
-        if (!ofs.is_open())
+        std::ofstream ofs(std::string(path), std::ios::binary);
+        if (!ofs)
         {
-            printError("Error: Failed to open file for writing: %s\n", path.c_str());
+            printError("Error: Failed to open file for writing: %.*s\n", static_cast<int>(path.size()), path.data());
             return -1;
         }
 
         // Configure CURL options
-        curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, UTIL::write_data);
+        curl_easy_setopt(curl.get(), CURLOPT_URL, std::string(url).c_str());
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeCallback);
         curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &ofs);
         curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, CURL_TIMEOUT_SECONDS);
         curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 0L);
-        curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "AmiiboGenerator/2.0");
+        curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "AmiiboGenerator/2.2");
 
-        // Perform download
-        CURLcode res = curl_easy_perform(curl.get());
-
-        // Close file stream after download
+        const CURLcode res = curl_easy_perform(curl.get());
         ofs.close();
 
+        const std::string pathStr(path);
         if (res != CURLE_OK)
         {
             printError("CURL error: %s\n", curl_easy_strerror(res));
-            std::filesystem::remove(path);
+            std::filesystem::remove(pathStr);
             return static_cast<int>(res);
         }
 
-        // Verify downloaded file size
         long http_code = 0;
         curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &http_code);
-
         if (http_code != 200)
         {
             printError("HTTP error: %ld\n", http_code);
-            std::filesystem::remove(path);
+            std::filesystem::remove(pathStr);
             return -1;
         }
 
@@ -174,106 +152,82 @@ namespace UTIL
         if (download_size < 100)
         {
             printError("Downloaded file too small: %.0f bytes\n", download_size);
-            std::filesystem::remove(path);
+            std::filesystem::remove(pathStr);
             return -1;
         }
 
         return 0;
     }
 
-    inline bool downloadAmiiboDatabase()
+    [[nodiscard]] inline bool downloadAmiiboDatabase()
     {
         printMessage("Starting database download from API...\n");
 
-        if (std::filesystem::exists(AMIIBO_DB_PATH))
+        const std::string dbPath(AMIIBO_DB_PATH);
+        std::error_code ec;
+        if (std::filesystem::exists(dbPath, ec))
         {
             printMessage("Removing old database file...\n");
-            try
-            {
-                std::filesystem::remove(AMIIBO_DB_PATH);
-            }
-            catch (const std::filesystem::filesystem_error &e)
-            {
-                printError("Warning: Failed to remove old database: %s\n", e.what());
-            }
+            std::filesystem::remove(dbPath, ec);
+            if (ec)
+                printError("Warning: Failed to remove old database: %s\n", ec.message().c_str());
         }
 
         printMessage("Connecting to AmiiboAPI...\n");
-        printMessage("URL: %s\n", AMIIBO_API_URL);
+        printMessage("URL: %.*s\n", static_cast<int>(AMIIBO_API_URL.size()), AMIIBO_API_URL.data());
         printMessage("This may take 30-60 seconds depending on connection...\n");
         printMessage("Please wait...\n");
 
-        int ret = UTIL::downloadFile(AMIIBO_API_URL, AMIIBO_DB_PATH);
-
-        if (ret == 0)
+        if (downloadFile(AMIIBO_API_URL, AMIIBO_DB_PATH) == 0)
         {
-            // Double-check the file was actually written
-            if (std::filesystem::exists(AMIIBO_DB_PATH))
+            if (const auto size = std::filesystem::file_size(dbPath, ec); !ec && size > 100)
             {
-                auto size = std::filesystem::file_size(AMIIBO_DB_PATH);
                 printMessage("Download completed successfully (%zu bytes)\n", static_cast<size_t>(size));
-                return size > 100;
+                return true;
             }
-            else
-            {
-                printError("Download reported success but file not found!\n");
-                return false;
-            }
+            printError("Download reported success but file invalid!\n");
         }
         else
         {
-            printError("Download failed with error code: %d\n", ret);
-            printError("Check your internet connection and DNS settings\n");
+            printError("Download failed. Check your internet connection.\n");
         }
-
         return false;
     }
 
-    inline bool checkAmiiboDatabase()
+    [[nodiscard]] inline bool checkAmiiboDatabase()
     {
+        std::error_code ec;
+        const std::string emuPath(EMUIIBO_PATH);
+        const std::string dbPath(AMIIBO_DB_PATH);
+
         // Ensure directory exists
-        try
+        if (!std::filesystem::exists(emuPath, ec))
         {
-            if (!std::filesystem::exists(EMUIIBO_PATH))
+            std::filesystem::create_directories(emuPath, ec);
+            if (ec)
             {
-                std::filesystem::create_directories(EMUIIBO_PATH);
+                printError("Error: Failed to create emuiibo directory: %s\n", ec.message().c_str());
+                return false;
             }
-        }
-        catch (const std::filesystem::filesystem_error &e)
-        {
-            printError("Error: Failed to create emuiibo directory: %s\n", e.what());
-            return false;
         }
 
         // Check if database exists
-        if (std::filesystem::exists(AMIIBO_DB_PATH))
+        if (std::filesystem::exists(dbPath, ec))
         {
-            try
-            {
-                auto file_size = std::filesystem::file_size(AMIIBO_DB_PATH);
-                printMessage("Database found (%zu bytes)\n", static_cast<size_t>(file_size));
-                return true;
-            }
-            catch (const std::filesystem::filesystem_error &e)
-            {
-                printMessage("Database found (size unknown)\n");
-                return true;
-            }
+            const auto file_size = std::filesystem::file_size(dbPath, ec);
+            printMessage("Database found (%zu bytes)\n", ec ? 0u : static_cast<size_t>(file_size));
+            return true;
         }
 
         printMessage("\nNo database found. Downloading...\n");
         return downloadAmiiboDatabase();
     }
 
-    inline bool isBlacklistedCharacter(char c)
+    [[nodiscard]] constexpr bool isBlacklistedCharacter(char c) noexcept
     {
-        // Only allow ASCII characters in file paths (cast to unsigned for comparison)
-        unsigned char uc = static_cast<unsigned char>(c);
+        const auto uc = static_cast<unsigned char>(c);
         if (uc >= 128)
-        {
             return true;
-        }
-
         switch (c)
         {
         case '!':
@@ -288,155 +242,120 @@ namespace UTIL
         }
     }
 
-    // Random number generation with better seeding
-    inline int RandU(int nMin, int nMax)
+    // Random number in range [nMin, nMax]
+    [[nodiscard]] inline int RandU(int nMin, int nMax) noexcept
     {
         if (nMin > nMax)
-        {
             std::swap(nMin, nMax);
-        }
-        return nMin + (rand() % (nMax - nMin + 1));
+        return nMin + (std::rand() % (nMax - nMin + 1));
     }
 
     // Endian swap for 16-bit values
-    inline uint16_t swap_uint16(uint16_t val)
+    [[nodiscard]] constexpr uint16_t swap_uint16(uint16_t val) noexcept
     {
-        return (val << 8) | (val >> 8);
+        return static_cast<uint16_t>((val << 8) | (val >> 8));
     }
 
     // RAII wrapper for stbi allocated memory
     class ImageData
     {
-    private:
-        unsigned char *data;
-        int width;
-        int height;
-        int channels;
+        unsigned char *data_ = nullptr;
+        int width_ = 0, height_ = 0, channels_ = 0;
 
     public:
-        ImageData(const std::string &path)
-            : data(nullptr), width(0), height(0), channels(0)
+        explicit ImageData(std::string_view path)
         {
             if (path.empty())
-            {
                 throw std::invalid_argument("Image path cannot be empty");
-            }
-            data = stbi_load(path.c_str(), &width, &height, &channels, 0);
-            if (data == nullptr)
-            {
-                throw std::runtime_error("Failed to load image: " + path);
-            }
+            data_ = stbi_load(std::string(path).c_str(), &width_, &height_, &channels_, 0);
+            if (!data_)
+                throw std::runtime_error(std::string("Failed to load image: ") + std::string(path));
         }
-
         ~ImageData()
         {
-            if (data != nullptr)
-            {
-                stbi_image_free(data);
-                data = nullptr;
-            }
+            if (data_)
+                stbi_image_free(data_);
         }
 
-        unsigned char *get() const { return data; }
-        int get_width() const { return width; }
-        int get_height() const { return height; }
-        int get_channels() const { return channels; }
-
-        // Disable copy operations
         ImageData(const ImageData &) = delete;
         ImageData &operator=(const ImageData &) = delete;
-
-        // Allow move operations
-        ImageData(ImageData &&other) noexcept
-            : data(other.data), width(other.width), height(other.height), channels(other.channels)
+        ImageData(ImageData &&o) noexcept
+            : data_(std::exchange(o.data_, nullptr)), width_(o.width_), height_(o.height_), channels_(o.channels_) {}
+        ImageData &operator=(ImageData &&o) noexcept
         {
-            other.data = nullptr;
-        }
-
-        ImageData &operator=(ImageData &&other) noexcept
-        {
-            if (this != &other)
+            if (this != &o)
             {
-                if (data != nullptr)
-                {
-                    stbi_image_free(data);
-                }
-                data = other.data;
-                width = other.width;
-                height = other.height;
-                channels = other.channels;
-                other.data = nullptr;
+                if (data_)
+                    stbi_image_free(data_);
+                data_ = std::exchange(o.data_, nullptr);
+                width_ = o.width_;
+                height_ = o.height_;
+                channels_ = o.channels_;
             }
             return *this;
         }
+
+        [[nodiscard]] unsigned char *get() const noexcept { return data_; }
+        [[nodiscard]] int width() const noexcept { return width_; }
+        [[nodiscard]] int height() const noexcept { return height_; }
+        [[nodiscard]] int channels() const noexcept { return channels_; }
     };
 
-    inline int loadAndResizeImageInRatio(const std::string &imagePath)
+    [[nodiscard]] inline bool loadAndResizeImageInRatio(std::string_view imagePath)
     {
+        if (imagePath.empty())
+        {
+            printError("Error: empty image path\n");
+            return false;
+        }
+
         try
         {
-            if (imagePath.empty())
-            {
-                printError("Error: empty image path\n");
-                return 0;
-            }
-
-            // Load image with RAII
-            ImageData imgData(imagePath);
-
-            // Calculate new dimensions maintaining aspect ratio
-            int new_width = (TARGET_IMAGE_HEIGHT * imgData.get_width()) / imgData.get_height();
-
-            if (new_width <= 0)
+            ImageData img(imagePath);
+            const int newWidth = (TARGET_IMAGE_HEIGHT * img.width()) / img.height();
+            if (newWidth <= 0)
             {
                 printError("Error: Invalid image dimensions for resizing\n");
-                return 0;
+                return false;
             }
 
-            // Allocate resized image buffer using unique_ptr
-            size_t resized_size = new_width * TARGET_IMAGE_HEIGHT * imgData.get_channels();
-            auto resized_data = std::make_unique<unsigned char[]>(resized_size);
+            const int pixelCount = newWidth * TARGET_IMAGE_HEIGHT;
+            auto resized = std::make_unique<unsigned char[]>(pixelCount * img.channels());
 
-            // Resize image
             stbir_resize_uint8_linear(
-                imgData.get(), imgData.get_width(), imgData.get_height(), 0,
-                resized_data.get(), new_width, TARGET_IMAGE_HEIGHT, 0,
-                (stbir_pixel_layout)imgData.get_channels());
+                img.get(), img.width(), img.height(), 0,
+                resized.get(), newWidth, TARGET_IMAGE_HEIGHT, 0,
+                static_cast<stbir_pixel_layout>(img.channels()));
 
             // Convert RGB to RGBA if needed
-            int final_channels = imgData.get_channels();
-            std::unique_ptr<unsigned char[]> final_data;
+            std::unique_ptr<unsigned char[]> finalData;
+            int finalChannels = img.channels();
 
-            if (imgData.get_channels() == 3)
+            if (img.channels() == 3)
             {
-                size_t rgba_size = new_width * TARGET_IMAGE_HEIGHT * 4;
-                final_data = std::make_unique<unsigned char[]>(rgba_size);
-
-                for (int i = 0; i < new_width * TARGET_IMAGE_HEIGHT; i++)
+                finalData = std::make_unique<unsigned char[]>(pixelCount * 4);
+                for (int i = 0; i < pixelCount; ++i)
                 {
-                    final_data[i * 4 + 0] = resized_data[i * 3 + 0];
-                    final_data[i * 4 + 1] = resized_data[i * 3 + 1];
-                    final_data[i * 4 + 2] = resized_data[i * 3 + 2];
-                    final_data[i * 4 + 3] = 255;
+                    finalData[i * 4 + 0] = resized[i * 3 + 0];
+                    finalData[i * 4 + 1] = resized[i * 3 + 1];
+                    finalData[i * 4 + 2] = resized[i * 3 + 2];
+                    finalData[i * 4 + 3] = 255;
                 }
-                final_channels = 4;
+                finalChannels = 4;
             }
             else
             {
-                final_data = std::move(resized_data);
+                finalData = std::move(resized);
             }
 
-            // Write resized image
-            int write_result = stbi_write_png(
-                imagePath.c_str(), new_width, TARGET_IMAGE_HEIGHT, final_channels,
-                final_data.get(), new_width * final_channels);
-
-            return write_result ? 1 : 0;
+            const std::string pathStr(imagePath);
+            return stbi_write_png(pathStr.c_str(), newWidth, TARGET_IMAGE_HEIGHT,
+                                  finalChannels, finalData.get(), newWidth * finalChannels) != 0;
         }
         catch (const std::exception &e)
         {
             printError("Error loading/resizing image: %s\n", e.what());
-            return 0;
+            return false;
         }
     }
-}
+} // namespace UTIL
