@@ -34,5 +34,6 @@
 *.elf
 *.nacp
 *.nro
+*.lst
 build/
 .vscode/

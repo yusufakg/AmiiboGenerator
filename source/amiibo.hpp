@@ -4,9 +4,12 @@
 #include <iostream>
 #include <vector>
 #include <dirent.h>
-#include <stdlib.h>
+#include <cstdlib>
 #include <algorithm>
 #include <filesystem>
+#include <stdexcept>
+#include <optional>
+#include <cstring>
 
 #include "util.hpp"
 #include "libs/json.hpp"
@@ -15,156 +18,335 @@ using json = nlohmann::json;
 
 class Amiibo
 {
+private:
+    static constexpr const char *AMIIBO_BASE_PATH = "sdmc:/emuiibo/amiibo/";
+
+    struct AmiiboId
+    {
+        std::string game_character_id;
+        std::string character_variant;
+        std::string character_figure_type;
+        std::string model_number;
+        std::string series;
+
+        static std::optional<AmiiboId> parse(const std::string &amiibo_id_str)
+        {
+            if (amiibo_id_str.length() < 16)
+            {
+                return std::nullopt;
+            }
+
+            AmiiboId id;
+            id.game_character_id = amiibo_id_str.substr(0, 4);
+            id.character_variant = amiibo_id_str.substr(4, 2);
+            id.character_figure_type = amiibo_id_str.substr(6, 2);
+            id.model_number = amiibo_id_str.substr(8, 4);
+            id.series = amiibo_id_str.substr(12, 2);
+            return id;
+        }
+    };
+
+    // Helper function to sanitize names for filesystem
+    static std::string sanitizePath(const std::string &input)
+    {
+        std::string result = input;
+        result.erase(
+            std::remove_if(result.begin(), result.end(), &UTIL::isBlacklistedCharacter),
+            result.end());
+        std::replace(result.begin(), result.end(), '/', '_');
+        return result;
+    }
+
+    // Helper function to convert hex string to int with error handling
+    static std::optional<int> hexToInt(const std::string &hexStr)
+    {
+        if (hexStr.empty())
+        {
+            return std::nullopt;
+        }
+        try
+        {
+            return static_cast<int>(std::strtol(hexStr.c_str(), nullptr, 16));
+        }
+        catch (const std::exception &)
+        {
+            return std::nullopt;
+        }
+    }
+
+    // Helper to validate and get amiibo data
+    bool validateAmiiboData(std::string &head, std::string &tail) const
+    {
+        if (!amiibo.contains("head") || !amiibo.contains("tail"))
+        {
+            fprintf(stderr, "Error: Missing head or tail in amiibo data\n");
+            return false;
+        }
+        head = amiibo["head"].get<std::string>();
+        tail = amiibo["tail"].get<std::string>();
+        return true;
+    }
+
+    // Helper to build amiibo path
+    std::string buildAmiiboPath(const std::string &amiiboId) const
+    {
+        if (!amiibo.contains("amiiboSeries") || !amiibo.contains("name"))
+        {
+            return "";
+        }
+
+        std::string amiiboSeries = sanitizePath(amiibo["amiiboSeries"].get<std::string>());
+        std::string amiiboName = sanitizePath(amiibo["name"].get<std::string>());
+
+        return std::string(AMIIBO_BASE_PATH) + amiiboSeries + "/" + amiiboName + "_" + amiiboId + "/";
+    }
+
 public:
     json amiibo;
 
-    Amiibo(json data)
+    explicit Amiibo(const json &data) : amiibo(data)
     {
-        srand(time(NULL));
-        amiibo = data;
-    };
+        // Note: srand should ideally be called once in main, not per object
+        // But keeping for compatibility - using nullptr instead of NULL for C++17
+        srand(static_cast<unsigned>(time(nullptr)));
+    }
+
+    // Default destructor is fine for this class
+    ~Amiibo() = default;
+
+    // Delete copy operations to prevent accidental duplication
+    Amiibo(const Amiibo &) = delete;
+    Amiibo &operator=(const Amiibo &) = delete;
+
+    // Allow move operations
+    Amiibo(Amiibo &&) noexcept = default;
+    Amiibo &operator=(Amiibo &&) noexcept = default;
 
     bool generate(bool withImage = false)
     {
-        time_t unixTime = time(NULL);
-        struct tm *timeStruct = gmtime((const time_t *)&unixTime);
-        int day = timeStruct->tm_mday;
-        int month = timeStruct->tm_mon;
-        int year = timeStruct->tm_year + 1900;
-
-        std::string amiiboId = amiibo["head"].get<std::string>().append(amiibo["tail"].get<std::string>());
-        if (amiiboId.length() < 16)
+        try
         {
-            printf("Amiibo ID is invalid\n");
-            return false;
-        }
-
-        std::string character_game_id_str = amiiboId.substr(0, 4);
-        std::string character_variant_str = amiiboId.substr(4, 2);
-        std::string character_figure_type_str = amiiboId.substr(6, 2);
-        std::string model_no_str = amiiboId.substr(8, 4);
-        std::string series_str = amiiboId.substr(12, 2);
-
-        int character_game_id_be = (int)strtol(character_game_id_str.c_str(), nullptr, 16);
-        int character_game_id_int_swap = UTIL::swap_uint16(character_game_id_be);
-        int character_variant_be = (int)strtol(character_variant_str.c_str(), nullptr, 16);
-        int figure_type_be = (int)strtol(character_figure_type_str.c_str(), nullptr, 16);
-        int modelNumber_be = (int)strtol(model_no_str.c_str(), nullptr, 16);
-        int series_be = (int)strtol(series_str.c_str(), nullptr, 16);
-
-        json amiiboData = json::object();
-        amiiboData["name"] = amiibo["name"];
-        amiiboData["write_counter"] = 0;
-        amiiboData["version"] = 0;
-
-        amiiboData["first_write_date"] = json::object();
-        amiiboData["first_write_date"]["y"] = year;
-        amiiboData["first_write_date"]["m"] = month + 1;
-        amiiboData["first_write_date"]["d"] = day;
-
-        amiiboData["last_write_date"] = json::object();
-        amiiboData["last_write_date"]["y"] = year;
-        amiiboData["last_write_date"]["m"] = month + 1;
-        amiiboData["last_write_date"]["d"] = day;
-
-        amiiboData["mii_charinfo_file"] = "mii-charinfo.bin";
-
-        amiiboData["id"] = json::object();
-        amiiboData["id"]["game_character_id"] = character_game_id_int_swap;
-        amiiboData["id"]["character_variant"] = character_variant_be;
-        amiiboData["id"]["figure_type"] = figure_type_be;
-        amiiboData["id"]["series"] = series_be;
-        amiiboData["id"]["model_number"] = modelNumber_be;
-
-        amiiboData["uuid"] = json::array();
-        amiiboData["uuid"][0] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][1] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][2] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][3] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][4] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][5] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][6] = UTIL::RandU(0, 255);
-        amiiboData["uuid"][7] = 0;
-        amiiboData["uuid"][8] = 0;
-        amiiboData["uuid"][9] = 0;
-
-        std::string amiiboSeries = amiibo["amiiboSeries"].get<std::string>();
-        std::string amiiboName = amiibo["name"].get<std::string>();
-
-        amiiboSeries.erase(std::remove_if(amiiboSeries.begin(), amiiboSeries.end(), &UTIL::isBlacklistedCharacter), amiiboSeries.end());
-        amiiboName.erase(std::remove_if(amiiboName.begin(), amiiboName.end(), &UTIL::isBlacklistedCharacter), amiiboName.end());
-
-        /* i have no idea what i did here. i think the top code is the same as below?
-        std::erase_if(amiiboSeries, [](char16_t ch)
-                      { return (ch >= 0xd800) && (ch <= 0xdfff); });
-        std::erase_if(amiiboName, [](char16_t ch)
-                      { return (ch >= 0xd800) && (ch <= 0xdfff); });
-        */
-
-        // replace all spaces with underscores
-        std::replace(amiiboSeries.begin(), amiiboSeries.end(), '/', '_');
-        std::replace(amiiboName.begin(), amiiboName.end(), '/', '_');
-
-        // some amiibos have the same name, adding the number suffix of the name ensures no overwrites.
-        std::string amiiboPathFull = "sdmc:/emuiibo/amiibo/" + amiiboSeries + "/" + amiiboName + "_" + amiiboId + "/"; // "sdmc:/emuiibo/amiibo/" +
-
-        // no need to create the amiibo if it already exists - delete it if you want to regenerate it.
-        if (std::filesystem::exists(amiiboPathFull))
-        {
-            printf("Amiibo already exists.\n");
-            return false;
-        }
-
-        // if it doesnt, create it.
-        std::filesystem::create_directories(amiiboPathFull);
-        if (std::filesystem::exists(amiiboPathFull))
-        {
-            std::ofstream output(amiiboPathFull + "amiibo.flag");
-            output.close();
-
-            std::ofstream output2(amiiboPathFull + "amiibo.json");
-            output2 << amiiboData.dump(2);
-            output2.close();
-
-            if (withImage)
+            // Get current date/time
+            time_t unixTime = time(nullptr);
+            struct tm *timeStruct = gmtime(&unixTime);
+            if (timeStruct == nullptr)
             {
-                int ret = UTIL::downloadFile(amiibo["image"].get<std::string>(), amiiboPathFull + "amiibo.png");
-                if (ret != 0)
+                fprintf(stderr, "Error: Failed to get current time\n");
+                return false;
+            }
+
+            int day = timeStruct->tm_mday;
+            int month = timeStruct->tm_mon;
+            int year = timeStruct->tm_year + 1900;
+
+            // Validate and parse amiibo data
+            std::string head, tail;
+            if (!validateAmiiboData(head, tail))
+            {
+                return false;
+            }
+
+            std::string amiiboId = head + tail;
+
+            // Parse amiibo ID
+            auto id_opt = AmiiboId::parse(amiiboId);
+            if (!id_opt.has_value())
+            {
+                fprintf(stderr, "Amiibo ID is invalid\n");
+                return false;
+            }
+
+            const auto &id = id_opt.value();
+
+            // Convert hex values to integers
+            auto cgid = hexToInt(id.game_character_id);
+            auto cvar = hexToInt(id.character_variant);
+            auto ftype = hexToInt(id.character_figure_type);
+            auto mnum = hexToInt(id.model_number);
+            auto snum = hexToInt(id.series);
+
+            if (!cgid.has_value() || !cvar.has_value() || !ftype.has_value() ||
+                !mnum.has_value() || !snum.has_value())
+            {
+                fprintf(stderr, "Error: Invalid hex values in amiibo ID\n");
+                return false;
+            }
+
+            int character_game_id_int_swap = UTIL::swap_uint16(cgid.value());
+
+            // Build amiibo data JSON
+            json amiiboData = json::object();
+            amiiboData["name"] = amiibo["name"];
+            amiiboData["write_counter"] = 0;
+            amiiboData["version"] = 0;
+
+            amiiboData["first_write_date"] = json::object();
+            amiiboData["first_write_date"]["y"] = year;
+            amiiboData["first_write_date"]["m"] = month + 1;
+            amiiboData["first_write_date"]["d"] = day;
+
+            amiiboData["last_write_date"] = json::object();
+            amiiboData["last_write_date"]["y"] = year;
+            amiiboData["last_write_date"]["m"] = month + 1;
+            amiiboData["last_write_date"]["d"] = day;
+
+            amiiboData["mii_charinfo_file"] = "mii-charinfo.bin";
+
+            amiiboData["id"] = json::object();
+            amiiboData["id"]["game_character_id"] = character_game_id_int_swap;
+            amiiboData["id"]["character_variant"] = cvar.value();
+            amiiboData["id"]["figure_type"] = ftype.value();
+            amiiboData["id"]["series"] = snum.value();
+            amiiboData["id"]["model_number"] = mnum.value();
+
+            // Generate UUID
+            amiiboData["uuid"] = json::array();
+            for (int i = 0; i < 7; i++)
+            {
+                amiiboData["uuid"][i] = UTIL::RandU(0, 255);
+            }
+            amiiboData["uuid"][7] = 0;
+            amiiboData["uuid"][8] = 0;
+            amiiboData["uuid"][9] = 0;
+
+            // Build full path
+            std::string amiiboPathFull = buildAmiiboPath(amiiboId);
+            if (amiiboPathFull.empty())
+            {
+                fprintf(stderr, "Error: Missing amiiboSeries or name in amiibo data\n");
+                return false;
+            }
+
+            // Check if already exists
+            if (std::filesystem::exists(amiiboPathFull))
+            {
+                printf("Amiibo already exists.\n");
+                return false;
+            }
+
+            // Create directories and files
+            try
+            {
+                std::filesystem::create_directories(amiiboPathFull);
+            }
+            catch (const std::filesystem::filesystem_error &e)
+            {
+                fprintf(stderr, "Error: Failed to create amiibo directory: %s\n", e.what());
+                return false;
+            }
+
+            // Write amiibo.flag file
+            try
+            {
+                std::ofstream flag_file(amiiboPathFull + "amiibo.flag");
+                if (!flag_file.is_open())
                 {
-                    printf("Failed to download image. Error code: %d\n", ret);
+                    fprintf(stderr, "Error: Failed to create amiibo.flag\n");
+                    return false;
                 }
-                else
+                flag_file.close();
+            }
+            catch (const std::exception &e)
+            {
+                fprintf(stderr, "Error: Failed to write amiibo.flag: %s\n", e.what());
+                return false;
+            }
+
+            // Write amiibo.json file
+            try
+            {
+                std::ofstream json_file(amiiboPathFull + "amiibo.json");
+                if (!json_file.is_open())
                 {
-                    UTIL::loadAndResizeImageInRatio(amiiboPathFull + "amiibo.png");
+                    fprintf(stderr, "Error: Failed to create amiibo.json\n");
+                    return false;
+                }
+                json_file << amiiboData.dump(2);
+                json_file.close();
+            }
+            catch (const std::exception &e)
+            {
+                fprintf(stderr, "Error: Failed to write amiibo.json: %s\n", e.what());
+                return false;
+            }
+
+            // Download image if requested
+            if (withImage && amiibo.contains("image"))
+            {
+                try
+                {
+                    std::string image_url = amiibo["image"].get<std::string>();
+                    int ret = UTIL::downloadFile(image_url, amiiboPathFull + "amiibo.png");
+                    if (ret != 0)
+                    {
+                        fprintf(stderr, "Warning: Failed to download image. Error code: %d\n", ret);
+                    }
+                    else
+                    {
+                        UTIL::loadAndResizeImageInRatio(amiiboPathFull + "amiibo.png");
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    fprintf(stderr, "Warning: Failed to process image: %s\n", e.what());
                 }
             }
+
+            return true;
         }
-        return true;
-    };
+        catch (const std::exception &e)
+        {
+            fprintf(stderr, "Error: Exception during amiibo generation: %s\n", e.what());
+            return false;
+        }
+    }
 
     bool erase()
     {
-        std::string amiiboId = amiibo["head"].get<std::string>().append(amiibo["tail"].get<std::string>());
-        if (amiiboId.length() < 16)
+        try
         {
-            printf("Amiibo ID is invalid\n");
+            // Validate data
+            std::string head, tail;
+            if (!validateAmiiboData(head, tail))
+            {
+                return false;
+            }
+
+            std::string amiiboId = head + tail;
+
+            // Parse amiibo ID
+            auto id_opt = AmiiboId::parse(amiiboId);
+            if (!id_opt.has_value())
+            {
+                fprintf(stderr, "Amiibo ID is invalid\n");
+                return false;
+            }
+
+            // Build full path
+            std::string amiiboPathFull = buildAmiiboPath(amiiboId);
+            if (amiiboPathFull.empty())
+            {
+                fprintf(stderr, "Error: Missing amiiboSeries or name in amiibo data\n");
+                return false;
+            }
+
+            // Remove directory
+            try
+            {
+                std::uintmax_t removed_count = std::filesystem::remove_all(amiiboPathFull);
+                printf("Deleted amiibo directory with %ju items\n", removed_count);
+                return true;
+            }
+            catch (const std::filesystem::filesystem_error &e)
+            {
+                fprintf(stderr, "Error: Failed to delete amiibo: %s\n", e.what());
+                return false;
+            }
+        }
+        catch (const std::exception &e)
+        {
+            fprintf(stderr, "Error: Exception during amiibo deletion: %s\n", e.what());
             return false;
         }
-
-        std::string amiiboSeries = amiibo["amiiboSeries"].get<std::string>();
-        std::string amiiboName = amiibo["name"].get<std::string>();
-
-        amiiboSeries.erase(std::remove_if(amiiboSeries.begin(), amiiboSeries.end(), &UTIL::isBlacklistedCharacter), amiiboSeries.end());
-        amiiboName.erase(std::remove_if(amiiboName.begin(), amiiboName.end(), &UTIL::isBlacklistedCharacter), amiiboName.end());
-
-        std::replace(amiiboSeries.begin(), amiiboSeries.end(), '/', '_');
-        std::replace(amiiboName.begin(), amiiboName.end(), '/', '_');
-
-        std::string amiiboPathFull = "sdmc:/emuiibo/amiibo/" + amiiboSeries + "/" + amiiboName + "_" + amiiboId + "/";
-
-        // std::uintmax_t n =
-        std::filesystem::remove_all(amiiboPathFull);
-
-        return false;
     }
 };

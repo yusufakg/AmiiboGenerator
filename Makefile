@@ -44,20 +44,20 @@ DATA		:=	data
 INCLUDES	:=	include
 #ROMFS	:=	romfs
 APP_TITLE 	:= AmiiboGenerator
-APP_AUTHOR 	:= Slluxx
-APP_VERSION := 2.1.1
+APP_AUTHOR 	:= yusufakg
+APP_VERSION := 2.2.0
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
-CFLAGS	:=	-g -Wall -O2 -ffunction-sections \
+CFLAGS	:=	-g -Wall -Wextra -O2 -ffunction-sections \
 			$(ARCH) $(DEFINES) `curl-config --cflags`
 
 CFLAGS	+=	$(INCLUDE) -D__SWITCH__
 
-CXXFLAGS	:= $(CFLAGS) -std=gnu++20 -fno-rtti -fno-exceptions
+CXXFLAGS	:= $(CFLAGS) -std=c++17 -fno-strict-aliasing -Wno-missing-field-initializers
 
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
