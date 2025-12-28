@@ -29,6 +29,8 @@ class AmiiboMenu
     bool withImage_ = false;
     bool shouldExit_ = false;
     PadState pad_{};
+    int holdUpTicks_ = 0;
+    int holdDownTicks_ = 0;
 
     template <typename T>
     [[nodiscard]] static T getJsonValue(const json &obj, std::string_view key, const T &defVal = T{})
@@ -139,13 +141,13 @@ public:
 
     void showMainScreen()
     {
-        std::puts("=== AmiiboGenerator ===                        - : Update DB  |  + : Exit\n");
+        std::puts("=== AmiiboGenerator ===                               - : Update DB  |  + : Exit\n");
         std::printf("Selected: %d/%zu   Images: %s   Sort: %.*s %s\n\n",
                     selectedCount_, amiibodata_["amiibo"].size(),
                     withImage_ ? "ON " : "OFF",
                     static_cast<int>(SORT_FIELDS[sortIndex_].size()), SORT_FIELDS[sortIndex_].data(),
                     SORT_DIRECTIONS[sortIndex_] == 'A' ? "ASC" : "DESC");
-        std::puts("ZL : Select All | ZR : Toggle Images | Y : Sort | X : Generate\n");
+        std::puts("ZL : Select All | ZR : Toggle Images | Y : Sort | X : Generate | LSTICK : Delete\n");
         showVisibleItems();
     }
 
@@ -232,14 +234,32 @@ public:
         if (kDown & HidNpadButton_StickL)
             deleteSelectedAmiibo();
 
-        // Analog stick scrolling
-        const auto stick = padGetStickPos(&pad_, 0);
-        constexpr int DEADZONE = 8000, MAX_STICK = 32767;
-        if (std::abs(stick.y) > DEADZONE)
+        const u64 kHeld = padGetButtons(&pad_);
+
+        if (kHeld & HidNpadButton_Up)
         {
-            const float pct = static_cast<float>(std::abs(stick.y) - DEADZONE) / (MAX_STICK - DEADZONE);
-            const int speed = 1 + static_cast<int>(pct * 9);
-            moveCursor(stick.y > 0 ? -speed : speed);
+            holdUpTicks_++;
+            if (holdUpTicks_ >= 5)
+            {
+                moveCursor(-1);
+            }
+        }
+        else
+        {
+            holdUpTicks_ = 0;
+        }
+
+        if (kHeld & HidNpadButton_Down)
+        {
+            holdDownTicks_++;
+            if (holdDownTicks_ >= 5)
+            {
+                moveCursor(+1);
+            }
+        }
+        else
+        {
+            holdDownTicks_ = 0;
         }
     }
 
@@ -298,6 +318,18 @@ public:
             return;
         }
 
+        // Check if amiibo folder exists and is not empty
+        std::error_code ec;
+        constexpr std::string_view basePath = "sdmc:/emuiibo/amiibo/";
+        if (!std::filesystem::exists(std::string(basePath), ec) ||
+            std::filesystem::is_empty(std::string(basePath), ec))
+        {
+            UTIL::printMessage("No amiibo folders found on SD card.\n");
+            svcSleepThread(1500000000ULL);
+            updateScreen();
+            return;
+        }
+
         UTIL::printMessage("Deleting %d amiibos. Please wait...\n\n", selectedCount_);
         consoleUpdate(nullptr);
 
@@ -331,8 +363,6 @@ public:
         selectedCount_ = 0;
 
         // Clean up empty directories
-        std::error_code ec;
-        constexpr std::string_view basePath = "sdmc:/emuiibo/amiibo/";
         if (std::filesystem::exists(std::string(basePath), ec))
         {
             for (const auto &entry : std::filesystem::directory_iterator(std::string(basePath), ec))
