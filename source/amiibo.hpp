@@ -9,7 +9,7 @@
 #include <filesystem>
 
 #include "util.hpp"
-#include "json.hpp"
+#include "libs/json.hpp"
 
 using json = nlohmann::json;
 
@@ -138,12 +138,12 @@ public:
                     UTIL::loadAndResizeImageInRatio(amiiboPathFull + "amiibo.png");
                 }
             }
-
         }
         return true;
     };
 
-    bool erase(){
+    bool erase()
+    {
         std::string amiiboId = amiibo["head"].get<std::string>().append(amiibo["tail"].get<std::string>());
         if (amiiboId.length() < 16)
         {
@@ -161,8 +161,8 @@ public:
         std::replace(amiiboName.begin(), amiiboName.end(), '/', '_');
 
         std::string amiiboPathFull = "sdmc:/emuiibo/amiibo/" + amiiboSeries + "/" + amiiboName + "_" + amiiboId + "/";
-        
-        // std::uintmax_t n = 
+
+        // std::uintmax_t n =
         std::filesystem::remove_all(amiiboPathFull);
 
         return false;

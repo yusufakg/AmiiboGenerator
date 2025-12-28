@@ -1,7 +1,7 @@
 #include <fstream>
 #include <iostream>
 
-#include "json.hpp"
+#include "libs/json.hpp"
 #include "amiibomenu.hpp"
 #include "util.hpp"
 
@@ -12,7 +12,6 @@ json amiibodata = json::object();
 
 int main()
 {
-
     consoleInit(NULL);
     // setsysInitialize();
     appletInitialize();
@@ -22,14 +21,14 @@ int main()
     // appletSetFocusHandlingMode(AppletFocusHandlingMode_NoSuspend); // disables suspension, doesnt work?
     appletSetAutoSleepDisabled(true); // disables sleep
 
-    if (UTIL::checkAmiiboDatabase() == true) { 
-        
+    if (UTIL::checkAmiiboDatabase() == true)
+    {
+
         std::ifstream i("sdmc:/emuiibo/amiibos.json");
         i >> amiibodata;
 
         AmiiboMenu menu(amiibodata);
-        menu.mainLoop(); 
-        
+        menu.mainLoop();
     }
 
     appletSetAutoSleepDisabled(false);

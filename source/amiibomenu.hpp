@@ -3,25 +3,26 @@
 #include <string>
 #include <filesystem>
 
-#include "json.hpp"
+#include "libs/json.hpp"
 #include "amiibo.hpp"
 
 using namespace std;
 using json = nlohmann::json;
 
-enum class AvailableScreens {
+enum class AvailableScreens
+{
     MAIN,
     HELP,
     CURRENT,
 };
 
-class AmiiboMenu 
+class AmiiboMenu
 {
 public:
     json amiibodata;
 
     const int itemsPerPage = 40;
-    const char* info[4] = { "amiiboSeries", "character", "gameSeries", "name" };
+    const char *info[4] = {"amiiboSeries", "character", "gameSeries", "name"};
 
     int currentSelectedAmiibos = 0;
     AvailableScreens currentScreen = AvailableScreens::MAIN;
@@ -35,30 +36,38 @@ public:
     bool shallExit = false;
 
     PadState pad;
-    
-    AmiiboMenu(json AmiiboData){
+
+    AmiiboMenu(json AmiiboData)
+    {
         amiibodata = AmiiboData;
     };
 
-    int getMaxPage(){
+    int getMaxPage()
+    {
         return (amiibodata["amiibo"].size() + itemsPerPage - 1) / itemsPerPage;
     }
 
-    void toggleAllAmiibo(){
+    void toggleAllAmiibo()
+    {
         clearScreen();
         printf("Toggling all amiibos. This might take a few seconds.\n");
         consoleUpdate(NULL);
 
         int newselected = 0;
-        for (int i = 0; i < (int)amiibodata["amiibo"].size(); i++) {
-            json& currentItem = amiibodata["amiibo"][i];
-            if (currentItem.contains("selected")) {
+        for (int i = 0; i < (int)amiibodata["amiibo"].size(); i++)
+        {
+            json &currentItem = amiibodata["amiibo"][i];
+            if (currentItem.contains("selected"))
+            {
                 bool selected = currentItem["selected"].get<bool>();
-                if (selected == false) {
+                if (selected == false)
+                {
                     newselected++;
                 }
                 currentItem["selected"] = !selected;
-            } else {
+            }
+            else
+            {
                 currentItem["selected"] = true;
                 newselected++;
             }
@@ -68,7 +77,8 @@ public:
         updateScreen(AvailableScreens::MAIN);
     }
 
-    void updateAmiiboDatabase(){
+    void updateAmiiboDatabase()
+    {
 
         clearScreen();
         printf("Updating amiibo database. This might take a few seconds.\n");
@@ -79,7 +89,8 @@ public:
             remove("sdmc:/emuiibo/amiibos.json");
         }
 
-        if (UTIL::checkAmiiboDatabase() == false){
+        if (UTIL::checkAmiiboDatabase() == false)
+        {
             printf("Download failed!\n ");
             shallExit = true;
             return;
@@ -89,58 +100,67 @@ public:
         consoleUpdate(NULL);
         std::ifstream i("sdmc:/emuiibo/amiibos.json");
         i >> amiibodata;
-        
+
         int loop = 5;
         while (loop)
         {
             printf("Back in %d seconds...\n", loop);
             consoleUpdate(NULL);
             svcSleepThread(1000000000ull);
-            if (loop < 0){ break; }
+            if (loop < 0)
+            {
+                break;
+            }
             loop -= 1;
         }
 
         updateScreen(AvailableScreens::MAIN);
-
     }
 
-    void toggleImageGeneration(){
+    void toggleImageGeneration()
+    {
         generateWithImage = !generateWithImage;
-        updateScreen(); 
+        updateScreen();
     }
 
     void clearScreen() { consoleClear(); /* consoleUpdate(NULL); */ };
 
-    void updateScreen(AvailableScreens screen = AvailableScreens::CURRENT) {
+    void updateScreen(AvailableScreens screen = AvailableScreens::CURRENT)
+    {
         clearScreen();
 
-        if (screen != AvailableScreens::CURRENT) {
-            if (currentScreen != screen) {
+        if (screen != AvailableScreens::CURRENT)
+        {
+            if (currentScreen != screen)
+            {
                 currentScreen = screen;
             }
         }
-        
+
         // failsafe
-        if (currentScreen == AvailableScreens::CURRENT) {
+        if (currentScreen == AvailableScreens::CURRENT)
+        {
             currentScreen = AvailableScreens::MAIN;
         }
 
-        switch (currentScreen) {
-            case AvailableScreens::MAIN:
-                screen_main();
-                break;
-            case AvailableScreens::HELP:
-                screen_help();
-                break;
-            default:
-                screen_main();
-                break;
+        switch (currentScreen)
+        {
+        case AvailableScreens::MAIN:
+            screen_main();
+            break;
+        case AvailableScreens::HELP:
+            screen_help();
+            break;
+        default:
+            screen_main();
+            break;
         }
 
         consoleUpdate(NULL);
     }
 
-    void screen_help() {
+    void screen_help()
+    {
         printf("Amiibo Menu - Help & Controls\n\n");
         printf(
             "Image generation       : %s\n"
@@ -162,26 +182,30 @@ public:
             "Y           : cycle amiibo info\n"
             "LS          : delete current selected amiibo\n"
             "RS          : sort database\n\n"
-            
-            "Press B to go back.\n", generateWithImage ? "Enabled" : "Disabled", info[currentInfoIndex]
-        );
+
+            "Press B to go back.\n",
+            generateWithImage ? "Enabled" : "Disabled", info[currentInfoIndex]);
     }
 
-    void screen_main() {
+    void screen_main()
+    {
         showTopInfo();
         showPage(currentMainPage);
     }
 
-    void nextInfoIndex(){
+    void nextInfoIndex()
+    {
         int maxLength = sizeof(info) / sizeof(info[0]);
         currentInfoIndex += 1;
-        if (currentInfoIndex >= maxLength) {
+        if (currentInfoIndex >= maxLength)
+        {
             currentInfoIndex = 0;
         }
         updateScreen();
     }
 
-    void showTopInfo(){
+    void showTopInfo()
+    {
         printf("Amiibo Menu - selected %d/%lu - Page %d/%d\n", currentSelectedAmiibos, amiibodata["amiibo"].size(), currentMainPage, getMaxPage());
         printf("Press B to toggle the info & controls screen.\n\n");
         // printf("A: Select | L/R: Page -/+ 10 | ZL/ZR: Page -/+ 100 | Y: Toggle info (%s)\n", info[currentInfoIndex]);
@@ -190,86 +214,117 @@ public:
 
     /* modify related to MAIN screen*/
 
-    void showPage(int page){
+    void showPage(int page)
+    {
         // Calculate the starting and ending indices for the current page
         int startIndex = (page - 1) * itemsPerPage;
         int endIndex = min(startIndex + itemsPerPage, static_cast<int>(amiibodata["amiibo"].size()));
 
-        if (startIndex >= (int)amiibodata["amiibo"].size()) {
+        if (startIndex >= (int)amiibodata["amiibo"].size())
+        {
             printf("Page number is out of range.\n");
             return;
         }
 
         // Extract the subset of data for the current page
         int localIndex = 0;
-        for (int i = startIndex; i < endIndex; i++) {
+        for (int i = startIndex; i < endIndex; i++)
+        {
             localIndex++;
-            const json& currentItem = amiibodata["amiibo"][i];
+            const json &currentItem = amiibodata["amiibo"][i];
             // Process currentItem as needed
             // cout << "Item " << i + 1 << ": " << currentItem << endl;
-            showItem(localIndex, i+1, currentItem);
+            showItem(localIndex, i + 1, currentItem);
         }
     }
 
-    void showItem(int localIndex, int gloabalIndex, json data ){
+    void showItem(int localIndex, int gloabalIndex, json data)
+    {
         string indicatorSelected = "N";
-        if (data.contains("selected")) {
-            if (data["selected"].get<bool>()) {
+        if (data.contains("selected"))
+        {
+            if (data["selected"].get<bool>())
+            {
                 indicatorSelected = "Y";
             }
         }
         string cursor = " ";
-        if (localIndex == currenentMainCursorPos) {
+        if (localIndex == currenentMainCursorPos)
+        {
             cursor = ">";
         }
         string text = data[info[currentInfoIndex]].get<string>();
         printf("%s [%s] %d) %s\n", cursor.c_str(), indicatorSelected.c_str(), gloabalIndex, text.c_str());
     }
 
-    void changePage(int delta){
+    void changePage(int delta)
+    {
         int newPage = currentMainPage + delta;
-        if (newPage < 1) { newPage = 1; }
-        if (newPage > getMaxPage()) { newPage = getMaxPage(); }
+        if (newPage < 1)
+        {
+            newPage = 1;
+        }
+        if (newPage > getMaxPage())
+        {
+            newPage = getMaxPage();
+        }
         currentMainPage = newPage;
         updateScreen();
     }
 
-    void changeCursorPosition(int delta){
+    void changeCursorPosition(int delta)
+    {
         int newCursorPosition = currenentMainCursorPos + delta;
-        if (newCursorPosition < 1) { newCursorPosition = itemsPerPage; }
-        if (newCursorPosition > itemsPerPage) { newCursorPosition = 1; }
+        if (newCursorPosition < 1)
+        {
+            newCursorPosition = itemsPerPage;
+        }
+        if (newCursorPosition > itemsPerPage)
+        {
+            newCursorPosition = 1;
+        }
         currenentMainCursorPos = newCursorPosition;
         updateScreen();
     }
 
-    void toggleCurrentItem(){
+    void toggleCurrentItem()
+    {
         int index = (currentMainPage - 1) * itemsPerPage + currenentMainCursorPos - 1;
-        if (index >= (int)amiibodata["amiibo"].size()) {
+        if (index >= (int)amiibodata["amiibo"].size())
+        {
             printf("Item number is out of range.\n");
             return;
         }
 
-        json& currentItem = amiibodata["amiibo"][index];
-        if (currentItem.contains("selected")) {
+        json &currentItem = amiibodata["amiibo"][index];
+        if (currentItem.contains("selected"))
+        {
             currentItem["selected"] = !currentItem["selected"].get<bool>();
-        } else {
+        }
+        else
+        {
             currentItem["selected"] = true;
         }
 
-        if (currentItem["selected"].get<bool>()) {
+        if (currentItem["selected"].get<bool>())
+        {
             currentSelectedAmiibos++;
-        } else {
+        }
+        else
+        {
             currentSelectedAmiibos--;
         }
 
         updateScreen();
     }
 
-    void inputHandler(){
+    void inputHandler()
+    {
         padUpdate(&pad);
         u64 kDown = padGetButtonsDown(&pad);
 
-        if (currentScreen == AvailableScreens::MAIN) {
+        if (currentScreen == AvailableScreens::MAIN)
+        {
             if (kDown & HidNpadButton_Plus) // works
                 shallExit = true;
             if (kDown & HidNpadButton_Minus) // works
@@ -302,8 +357,9 @@ public:
                 deleteSelectedAmiibo();
             if (kDown & HidNpadButton_StickR)
                 sortAmiibo();
-            
-        } else if (currentScreen == AvailableScreens::HELP) {
+        }
+        else if (currentScreen == AvailableScreens::HELP)
+        {
             if (kDown & HidNpadButton_ZR) // works
                 toggleImageGeneration();
             if (kDown & HidNpadButton_Y) // works
@@ -315,15 +371,19 @@ public:
         }
     }
 
-    void generateAmiibo(){
+    void generateAmiibo()
+    {
         clearScreen();
 
         int generatedAmiibo = 1;
 
-        for (int i = 0; i < (int)amiibodata["amiibo"].size(); i++) {
-            const json& currentItem = amiibodata["amiibo"][i];
-            if (currentItem.contains("selected")) {
-                if (currentItem["selected"].get<bool>()) {
+        for (int i = 0; i < (int)amiibodata["amiibo"].size(); i++)
+        {
+            const json &currentItem = amiibodata["amiibo"][i];
+            if (currentItem.contains("selected"))
+            {
+                if (currentItem["selected"].get<bool>())
+                {
                     printf("%d/%d - Generating: %s\n", generatedAmiibo, currentSelectedAmiibos, currentItem["name"].get<string>().c_str());
                     consoleUpdate(NULL);
                     Amiibo amiibo(currentItem);
@@ -337,7 +397,8 @@ public:
         consoleUpdate(NULL);
 
         bool loop = true;
-        while (loop){
+        while (loop)
+        {
             padUpdate(&pad);
             u64 kDown = padGetButtonsDown(&pad);
 
@@ -349,15 +410,19 @@ public:
         updateScreen(AvailableScreens::MAIN);
     }
 
-    void deleteSelectedAmiibo(){
+    void deleteSelectedAmiibo()
+    {
         clearScreen();
         printf("Deleting amiibo. This might take a few seconds.\n");
         consoleUpdate(NULL);
 
-        for (int i = 0; i < (int)amiibodata["amiibo"].size(); i++) {
-            const json& currentItem = amiibodata["amiibo"][i];
-            if (currentItem.contains("selected")) {
-                if (currentItem["selected"].get<bool>()) {
+        for (int i = 0; i < (int)amiibodata["amiibo"].size(); i++)
+        {
+            const json &currentItem = amiibodata["amiibo"][i];
+            if (currentItem.contains("selected"))
+            {
+                if (currentItem["selected"].get<bool>())
+                {
                     printf("Deleting: %s\n", currentItem["name"].get<string>().c_str());
                     consoleUpdate(NULL);
                     Amiibo amiibo(currentItem);
@@ -371,26 +436,29 @@ public:
         updateScreen(AvailableScreens::MAIN);
     }
 
-    void sortAmiibo() {
+    void sortAmiibo()
+    {
         const std::string sortingArgument = info[currentInfoIndex];
         using amiiboType = decltype(*amiibodata["amiibo"].begin());
 
-        std::sort(amiibodata["amiibo"].begin(), amiibodata["amiibo"].end(), [&sortingArgument] (const amiiboType item1, const amiiboType item2) {
-            return item1[sortingArgument] < item2[sortingArgument];
-        });
+        std::sort(amiibodata["amiibo"].begin(), amiibodata["amiibo"].end(), [&sortingArgument](const amiiboType item1, const amiiboType item2)
+                  { return item1[sortingArgument] < item2[sortingArgument]; });
 
         updateScreen();
     }
 
-    int mainLoop(){
+    int mainLoop()
+    {
 
         padConfigureInput(1, HidNpadStyleSet_NpadStandard);
         padInitializeDefault(&pad);
 
         updateScreen();
 
-        while (appletMainLoop()){
-            if (shallExit) {
+        while (appletMainLoop())
+        {
+            if (shallExit)
+            {
                 return -1;
             }
             inputHandler();
@@ -398,5 +466,4 @@ public:
         }
         return 0;
     }
-
 };

@@ -2,7 +2,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE2_IMPLEMENTATION
 
 #include <filesystem>
 #include <stdio.h>
@@ -12,9 +12,9 @@
 #include <switch.h>
 #include <curl/curl.h>
 
-#include "stb_image.h"
-#include "stb_image_write.h"
-#include "stb_image_resize.h"
+#include "libs/stb_image.h"
+#include "libs/stb_image_write.h"
+#include "libs/stb_image_resize2.h"
 
 namespace UTIL
 {
@@ -26,7 +26,7 @@ namespace UTIL
 
     static int downloadFile(std::string url, std::string path)
     {
-        
+
         CURL *curl;
         FILE *fp;
         CURLcode res;
@@ -42,10 +42,10 @@ namespace UTIL
             fclose(fp);
             return res;
         }
-        
+
         return -1;
     }
-    
+
     static bool downloadAmiiboDatabase()
     {
         if (std::filesystem::exists("sdmc:/emuiibo/amiibos.json"))
@@ -63,7 +63,8 @@ namespace UTIL
 
     static bool checkAmiiboDatabase()
     {
-        if (!std::filesystem::exists("sdmc:/emuiibo/")){
+        if (!std::filesystem::exists("sdmc:/emuiibo/"))
+        {
             std::filesystem::create_directories("sdmc:/emuiibo/");
         }
 
@@ -88,7 +89,10 @@ namespace UTIL
                     printf("Exiting in %d seconds...\n", loop);
                     consoleUpdate(NULL);
                     svcSleepThread(1000000000ull);
-                    if (loop < 0){ break; }
+                    if (loop < 0)
+                    {
+                        break;
+                    }
                     loop -= 1;
                 }
                 return false; // did not download
@@ -143,7 +147,7 @@ namespace UTIL
         // resize image to a height of 150px and keep the aspect ratio
         int newWidth = 150 * width / height;
         unsigned char *resizedData = (unsigned char *)malloc(newWidth * 150 * channels);
-        stbir_resize_uint8(data, width, height, 0, resizedData, newWidth, 150, 0, channels);
+        stbir_resize_uint8_linear(data, width, height, 0, resizedData, newWidth, 150, 0, (stbir_pixel_layout)channels);
 
         // convert to RGBA if needed
         if (channels == 3)
@@ -170,27 +174,4 @@ namespace UTIL
 
         return 1;
     }
-    
-    /*
-    static void delete_folder_contents(const std::string &path)
-    {
-        DIR *dir;
-        struct dirent *ent;
-        if ((dir = opendir(path.c_str())) != NULL)
-        {
-            while ((ent = readdir(dir)) != NULL)
-            {
-                if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0)
-                {
-                    std::string file = path + "/" + ent->d_name;
-                    remove(file.c_str());
-                }
-            }
-            closedir(dir);
-        }
-        remove(path.c_str());
-        printf(".");
-        consoleUpdate(NULL);
-    }*/
-
 }
