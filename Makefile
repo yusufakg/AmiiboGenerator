@@ -45,7 +45,7 @@ INCLUDES	:=	include
 #ROMFS	:=	romfs
 APP_TITLE 	:= AmiiboGenerator
 APP_AUTHOR 	:= yusufakg
-APP_VERSION := 2.2.0
+APP_VERSION := 2.2.1
 
 #---------------------------------------------------------------------------------
 # options for code generation

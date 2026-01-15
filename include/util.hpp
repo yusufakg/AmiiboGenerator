@@ -22,7 +22,7 @@ namespace UTIL
     // Constants
     inline constexpr std::string_view EMUIIBO_PATH = "sdmc:/emuiibo/";
     inline constexpr std::string_view AMIIBO_DB_PATH = "sdmc:/emuiibo/amiibos.json";
-    inline constexpr std::string_view AMIIBO_API_URL = "https://www.amiiboapi.com/api/amiibo/";
+    inline constexpr std::string_view AMIIBO_API_URL = "https://www.amiiboapi.org/api/amiibo/";
     inline constexpr int TARGET_IMAGE_HEIGHT = 150;
     inline constexpr long CURL_TIMEOUT_SECONDS = 120L;
 
